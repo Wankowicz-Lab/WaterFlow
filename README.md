@@ -37,13 +37,13 @@ WaterFlow is a two-stage Deep Learning model that predicts the positions of orde
 
 ## Installation
 
-WaterFlow uses [`uv`](https://docs.astral.sh/uv/) with Python 3.12. From the repository root:
+WaterFlow uses [`uv`](https://docs.astral.sh/uv/) with Python 3.12. From the repository root run:
 
 ```bash
 uv sync
 ```
 
-Every command below runs through `uv run`.
+Every command below runs through `uv run python ...`.
 
 ### System libraries
 
@@ -66,7 +66,7 @@ If PyMOL still fails to import, add `libxrender1 libxext6`.
 ### Building an environment from scratch
 
 <details>
-<summary>Only if you cannot use <code>uv sync</code></summary>
+<summary>Only if you cannot use <code>uv sync</code> for whatever reason</summary>
 
 `pyproject.toml` is the single source of truth for dependencies, including the pinned CUDA
 12.6 wheel indexes for `torch`, `torch-scatter`, `torch-cluster` and `pyg-lib`.
@@ -87,8 +87,8 @@ To target a different CUDA build, change the index URLs under `[[tool.uv.index]]
 
 `scripts/predict_waters.py` is the end-to-end prediction tool script. Given a raw PDB or mmCIF
 structure it strips any existing waters, builds the graph from protein + het-atoms, samples
-candidates with the flow model, scores them with the confidence model, selects the final set,
-and writes the input structure back out with the predicted waters added.
+candidates with the flow model, scores them with the confidence model, selects the final set of waters,
+and writes the input structure out with the predicted waters added, along with a file of coordinates and confidence scores.
 
 The four steps below cover the pipeline end to end. Fetch the weights, pick a checkpoint model set, generate
 embeddings, and predict waters.
@@ -403,7 +403,7 @@ uv run python -m scripts.train \
 Checkpoints, `config.json`, and logs land in `<save_dir>/<run_name>/`. That run directory is
 the `--flow_run_dir` for later stages.
 
-**Multi-GPU:** launch the same command with `torchrun` — no code flag needed. Plain
+**Multi-GPU:** launch the same command with `torchrun` and no code flag needed. Plain
 `python -m scripts.train` stays single-GPU.
 
 ```bash
@@ -453,7 +453,7 @@ uv run python -m scripts.train_confidence \
 
 `--init_from` warm-starts the shared backbone from the flow checkpoint; `--freeze_backbone`
 then trains only the score head. Validation reports AUC-PR (used for checkpoint selection) and
-best F1. Multi-GPU works the same way as flow training — prefix with `torchrun --nproc_per_node=N`.
+best F1. Multi-GPU works the same way as flow training, prefix with `torchrun --nproc_per_node=N`.
 
 To use your own models for prediction, collect them into one directory under the four names
 `predict_waters.py` expects:
