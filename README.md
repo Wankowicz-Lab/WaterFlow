@@ -97,7 +97,7 @@ embeddings, and predict waters.
 
 The pretrained weights live in `checkpoints/` and are stored with
 [Git LFS](https://git-lfs.com). A plain `git clone` succeeds without LFS, but each `.pt`
-arrives as a few-hundred-byte text pointer instead of the ~42 MB model, and loading it fails.
+arrives as a few-hundred-byte text pointer instead of the ~16 MB model, and loading it fails.
 
 Install Git LFS if you do not have it:
 
@@ -225,12 +225,17 @@ generate them all first (Step 3). Structures are processed in batches of `--batc
 ### Reusing work between runs
 
 `--geometry_cache <dir>` caches the flow inputs (inference graphs) at `<dir>/<name>.pt` and the
-flow outputs (sampled candidates) at `<dir>/candidates/<name>.pt`. Both are reused when present,
-so a re-run skips graph construction and flow sampling for structures already cached. For a
-single small protein this barely matters; it pays off across repeated runs over many structures.
+flow outputs (sampled candidates) under `<dir>/candidates/`. Both are reused when present, so a
+re-run skips graph construction and flow sampling for structures already cached. For a single
+small protein this barely matters; it pays off across repeated runs over many structures,
+for example when trying different `--selection` settings or confidence thresholds.
 
-Cache entries written by a mates checkpoint carry a `_mates` suffix (`<name>_mates.pt`), so mates
-and `mates_off` runs can safely share one cache directory without reusing each other's graphs.
+Entries written with symmetry mates carry a `_mates` suffix (`<name>_mates.pt`), so mates and
+`mates_off` runs can share one cache directory. Candidate files additionally carry the
+checkpoint directory name, integration method, step count and water ratio
+(`<name>_mates_mates_euler20_r8.0.pt`), so changing any of those samples fresh candidates
+instead of reusing stale ones. Confidence scoring and selection are never cached; they run on
+every call.
 
 ### Selecting the final waters
 
@@ -472,7 +477,9 @@ Then predict with `--ckpt_dir my_ckpts`.
 
 The commands below are the recipe recorded in the shipped
 `checkpoints/*/flow_config.json` and `confidence_config.json`, reduced to the flags that differ
-from current defaults. They reproduce every recorded setting.
+from current defaults. They reproduce every recorded setting. Path-valued keys in those configs
+(`processed_dir`, `save_dir`, `resume`, `init_from`, ...) are recorded as `null`; prediction
+never reads them.
 
 **Flow generator — `checkpoints/mates`:**
 
