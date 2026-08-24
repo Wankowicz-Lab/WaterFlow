@@ -2,10 +2,10 @@
 
 Argument reference for the flow trainer (`scripts/train.py`) and the confidence
 trainer (`scripts/train_confidence.py`). For the end-to-end walkthrough, see the
-[README](../README.md); for data preparation and quality filters, see
+[README](../README.md). For data preparation and quality filters, see
 [data.md](data.md).
 
-In the **flow** trainer, `--processed_dir` and `--base_pdb_dir` are required; `--save_dir`
+In the **flow** trainer, `--processed_dir` and `--base_pdb_dir` are required. `--save_dir`
 defaults to `flow_checkpoints` in the working directory. The confidence trainer requires
 all three.
 
@@ -30,9 +30,9 @@ uv run python -m scripts.train \
 | `--base_pdb_dir` | required | Base PDB directory (used to build the geometry cache) |
 | `--processed_dir` | required | Cache root (geometry + embeddings) |
 | `--geometry_cache_name` | `geometry` | Base name for the geometry cache directory |
-| `--encoder_type` | `esm` | `esm` and `slae` need embeddings under `--processed_dir`; `gvp` learns from coordinates alone |
+| `--encoder_type` | `esm` | `esm` and `slae` need embeddings under `--processed_dir`. `gvp` learns from coordinates alone |
 | `--include_mates` | off | Include symmetry-mate atoms as protein nodes |
-| `--include_ligands` | on | Include ligand/ion/cofactor/nucleic-acid heavy atoms; negate with `--no-include_ligands` |
+| `--include_ligands` | on | Include ligand/ion/cofactor/nucleic-acid heavy atoms. Negate with `--no-include_ligands` |
 | `--hidden_s` | `256` | Scalar hidden dimension |
 | `--hidden_v` | `64` | Vector hidden dimension |
 | `--flow_layers` | `3` | Number of flow GVP layers |
@@ -42,11 +42,11 @@ uv run python -m scripts.train \
 
 | Argument | Default | Description |
 |---|---|---|
-| `--sampling_strategy` | `uniform_ball` | Flow prior: `uniform_ball` or `scaled_gaussian`; also resolves `--dynamic_edge_policy auto` |
+| `--sampling_strategy` | `uniform_ball` | Flow prior: `uniform_ball` or `scaled_gaussian`. Also resolves `--dynamic_edge_policy auto` |
 | `--dynamic_edge_policy` | `auto` | Water-edge construction: `auto`, `radius`, `knn`, `knn_if_isolated` (see [model.md](model.md)) |
 | `--cutoff` | `8.0` | Radius-edge distance cutoff (Å) for the **model's** dynamic water edges. Does not reach the dataset: cached PP edges and the crystal-contact radius always use the dataset default of 8.0 |
 | `--max_neighbors` | `256` | Cap per source for radius edges, **model-side only** (same caveat as `--cutoff`) |
-| `--knn_fallback_k` | `8` | Neighbors attached to waters stranded under `knn_if_isolated`; `0` disables |
+| `--knn_fallback_k` | `8` | Neighbors attached to waters stranded under `knn_if_isolated`. `0` disables |
 | `--k_pw` / `--k_ww` / `--k_wp` | `12` / `8` / `8` | Neighbour counts for protein→water, water→water, water→protein under `knn` |
 | `--disable_ww` / `--disable_wp` | off | Ablate water→water / water→protein edges |
 
@@ -63,7 +63,8 @@ uv run python -m scripts.train \
 | `--scheduler` | `cosine` | `cosine`, `step`, or `none` |
 | `--warmup_steps` | `0` | Linear warmup steps |
 | `--eta_min_factor` | `0.001` | Cosine floor = lr × this |
-| `--use_amp` | on | bfloat16 autocast (CUDA only); `--no-use_amp` to disable |
+| `--lr_decay_epochs` | `--epochs` | Epochs over which cosine decays to the floor, then holds |
+| `--use_amp` | on | bfloat16 autocast (CUDA only). `--no-use_amp` disables |
 | `--fused_adamw` | off | Fused AdamW (CUDA only) |
 | `--seed` / `--val_seed` | `42` / `1234` | Train and validation RNG seeds |
 
@@ -76,11 +77,11 @@ uv run python -m scripts.train \
 | `--eval_steps` | `50` | Integration steps during eval |
 | `--n_eval_samples` | `3` | Number of validation structures evaluated (drawn once at start, fixed thereafter) |
 | `--threshold` | `1.0` | Distance (Å) for precision/recall matching |
-| `--selection_metric` | `blend` | Checkpoint-selection metric. `val_loss` is checked every epoch; `f1`, `auc_pr` and `blend` (0.85×F1 + 0.15×AUC-PR) come from the sampling eval, so they are checked on eval epochs only and averaged over the last 3. Falls back to `val_loss` when no eval epoch will run |
+| `--selection_metric` | `blend` | Checkpoint-selection metric. `val_loss` is checked every epoch. `f1`, `auc_pr` and `blend` (0.85×F1 + 0.15×AUC-PR) come from the sampling eval, so they are checked on eval epochs only and averaged over the last 3. Falls back to `val_loss` when no eval epoch will run |
 | `--save_dir` | `flow_checkpoints` | Parent directory for runs |
-| `--run_name` | auto | Run identifier; default is `YYYYMMDD_HHMMSS_<encoder>_L<flow_layers>_h<hidden_s>` |
+| `--run_name` | auto | Run identifier. Default is `YYYYMMDD_HHMMSS_<encoder>_L<flow_layers>_h<hidden_s>` |
 | `--save_every` | `10` | Save a periodic checkpoint every N epochs |
-| `--resume` | off | Resume from the highest-numbered `epoch_*.pt` in the run (not `best.pt`); requires `--run_name` |
+| `--resume` | off | Resume from the highest-numbered `epoch_*.pt` in the run (not `best.pt`). Requires `--run_name` |
 
 Checkpoints land in `<save_dir>/<run_name>/checkpoints/`: `best.pt` (best
 selection metric) and `epoch_N.pt` (periodic). `config.json` one level up in the run directory records
@@ -96,13 +97,13 @@ Passing `--wandb_project <name>` switches the run to **online** mode: metrics st
 project on wandb.ai, which requires being logged in. Authenticate once per machine with
 `wandb login` (paste the key from https://wandb.ai/authorize) or set `WANDB_API_KEY` in the
 environment. `--wandb_dir` sets where the local run directory is written and `--run_name`
-sets the run's display name. Under DDP only rank 0 logs; the other ranks stay disabled.
+sets the run's display name. Under DDP only rank 0 logs. The other ranks stay disabled.
 
 ## Multi-GPU (DDP)
 
-Launch the same script with `torchrun`; there is no separate code flag. DDP switches
-on when `WORLD_SIZE > 1`, so plain `python -m scripts.train` — and
-`torchrun --nproc_per_node=1` — stay single-GPU.
+Launch the same script with `torchrun`. There is no separate flag. DDP switches on
+when `WORLD_SIZE > 1`, so plain `python -m scripts.train` and
+`torchrun --nproc_per_node=1` both stay single-GPU.
 
 ```bash
 uv run torchrun --nproc_per_node=4 -m scripts.train \
@@ -155,17 +156,17 @@ uv run python -m scripts.train_confidence \
 | `--grad_accum_steps` | `1` | Effective batch = n_gpus × batch_size × grad_accum_steps |
 | `--weight_decay` | `1e-5` | Weight decay |
 | `--eta_min_factor` | `0.01` | Cosine floor = lr × this |
-| `--use_amp` | on | bfloat16 autocast (CUDA only); `--no-use_amp` to disable |
+| `--use_amp` | on | bfloat16 autocast (CUDA only). `--no-use_amp` disables |
 | `--fused_adamw` | off | Fused AdamW (CUDA only) |
 | `--num_workers` | `4` | DataLoader workers |
-| `--geometry_cache_name` / `--include_mates` | inherit | Override the flow run's cache layout; default is to reuse it |
+| `--geometry_cache_name` / `--include_mates` | inherit | Override the flow run's cache layout. Default is to reuse it |
 | `--r_in` / `--r_out` | `0.5` / `1.5` | Smootherstep plateau/floor radii (Å) |
 | `--accept_radius` | `1.0` | Acceptance radius (Å) for the AUC-PR label and `--hard_label` |
 | `--hard_label` | off | Train on `1[d <= accept_radius]` instead of the soft target |
 | `--wandb_project` | off | Set to enable W&B (opt-in, as in the flow trainer) |
 
 Validation reports AUC-PR (used for checkpoint selection) and best F1. Multi-GPU
-works exactly like flow training — prefix with `torchrun --nproc_per_node=N`. Each
+works exactly like flow training: prefix with `torchrun --nproc_per_node=N`. Each
 rank trains a disjoint shard, the loss is all-reduced, and (score, label) pairs are
 pooled across ranks so AUC-PR/F1 rank the full candidate set. Rank 0 alone writes
 checkpoints.

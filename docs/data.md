@@ -42,29 +42,29 @@ Plain text, one entry per line:
 - Biotite extracts protein atoms, waters (`HOH` or `WAT`), and ligands, dispatching on
   extension (`.cif` via `CIFFile`, otherwise `PDBFile`).
 - "Ligand" means every non-protein, non-water heavy atom: small molecules, ions,
-  cofactors, nucleic acids. Included by default; disable with `--no-include_ligands`.
+  cofactors, nucleic acids. Included by default. Disable with `--no-include_ligands`.
 - Modified residues are kept through parsing and geometry preprocessing. When ESM
-  embeddings are generated, they are mapped to encoder-compatible identities
-  (MSE→MET, SEC→SEC, etc.).
+  embeddings are generated, each is mapped to its canonical parent (MSE→MET) and
+  unrecognized names to `UNK`.
 - Hydrogens are dropped. Only the first model is used. For alternate
   conformations, the highest-occupancy conformer is kept.
 
 ## Crystal symmetry mates
 
-Included only with `--include_mates`; a no-mates cache never invokes PyMOL.
+Included only with `--include_mates`. A no-mates cache never invokes PyMOL.
 
 - PyMOL's `symexp` generates symmetry mates, keeping whole residues and whole
   ligand entities with any atom within the cutoff of the ASU. Protein and ligand
   mates are classified separately, so `is_ligand` stays exact for mate nodes.
-- **Mate waters are never kept.** A mate water is a symmetry image of an ASU water
-  — the thing the model predicts — so keeping it as context would leak the label.
+- **Mate waters are never kept.** A mate water is a symmetry image of an ASU water,
+  which is what the model predicts, so keeping it as context would leak the label.
 - Symmetry can map an atom onto itself (special position) or reach one residue
   through two operators. Mate atoms within 0.3 Å of an ASU atom, a target water,
-  or an already-kept mate atom are dropped; mate ligands are judged whole, so a
+  or an already-kept mate atom are dropped. Mate ligands are judged whole, so a
   ligand is never fragmented.
 - A mate inherits its source residue's `(chain, res_id, ins_code)`, so it picks up
   that residue's ESM row through `emb_res_idx` instead of a zero vector, and it
-  joins the distance-filter reference — a water in a crystal contact is not dropped
+  joins the distance-filter reference, so a water in a crystal contact is not dropped
   as solvent-far.
 
 ## Cache structure
@@ -74,16 +74,16 @@ Preprocessed data is cached under `--processed_dir` in three layers:
 ```
 <processed_dir>/
 ├── geometry/                       # graph structures (see naming below)
+│   ├── _filter_meta.json           # settings this directory was built with
 │   └── <pdb_id>_final.pt
 │       - protein_pos      centered node coordinates (N, 3)
 │       - protein_x        element one-hot (N, 16)
 │       - protein_res_idx  residue indices for grouping
 │       - is_ligand        mask marking ligand atoms (N,)
 │       - is_mate          mask marking symmetry-mate atoms (N,)
-│       - emb_res_idx      embedding row per atom; -1 = no row (N,)
+│       - emb_res_idx      embedding row per atom, -1 = no row (N,)
 │       - water_pos, water_x   water coordinates and features
 │       - num_asu_protein  ASU protein atom count (mate boundary)
-├── geometry/_filter_meta.json      # settings this directory was built with
 ├── esm/                            # ESM embeddings (per residue)
 │   └── <pdb_id>_final.pt
 │       - residue_embeddings (N_res, embed_dim)
@@ -94,8 +94,8 @@ Preprocessed data is cached under `--processed_dir` in three layers:
 
 Embedding files are keyed by split entry (`<pdb_id>_final`) when generated from a
 `--split_file`. Generating from raw files with `--struc` keys them by file stem
-instead, which is how prediction looks them up — see the
-[README](../README.md#step-3--generate-esm-embeddings).
+instead, which is how prediction looks them up. See the
+[README](../README.md#step-3-generate-esm-embeddings).
 
 The `protein_*` names predate mates and ligands: `N` is the total node count and
 these arrays hold every node. Node order is
@@ -129,7 +129,7 @@ The base name comes from `--geometry_cache_name` (default `geometry`).
 ### Filter metadata
 
 Filtering happens *before* the cache is written, so the thresholds are a property
-of the directory, not of the run reading it — the `.pt` files record almost none of
+of the directory, not of the run reading it. The `.pt` files record almost none of
 them (`max_neighbors` is the exception). Each geometry directory carries a
 `_filter_meta.json` recording the per-water filters and their toggles, the
 structure-level checks (`min_water_residue_ratio`, `max_com_dist`,
@@ -137,14 +137,14 @@ structure-level checks (`min_water_residue_ratio`, `max_com_dist`,
 parameters behind the cached PP edges (`cutoff`, `max_neighbors`).
 
 > These two are the `ProteinWaterDataset` defaults (8.0 / 256), **not** whatever
-> `--cutoff` / `--max_neighbors` you passed to the trainer — those flags only
+> `--cutoff` / `--max_neighbors` you passed to the trainer. Those flags only
 > configure the model. Changing them therefore never invalidates a cache.
 
-The first run with `preprocess=True` writes this file; every later run compares
+The first run with `preprocess=True` writes this file. Every later run compares
 against it and **refuses to start** on a mismatch rather than mixing differently
 filtered entries into one directory. A disabled filter records `null`. Directories
 built before this file existed load with a warning until a preprocessing run
-stamps them — check your thresholds match before that first run.
+stamps them. Check your thresholds match before that first run.
 
 ### Cache generation notes
 
@@ -181,12 +181,12 @@ These remove individual low-quality waters and can each be toggled off:
 | `--max_bfactor_zscore` | `2.0` | `--no_filter_by_bfactor` | Remove waters with high B-factor |
 
 **EDIA** (Electron Density Interpretation of Atoms) measures how well an atom's
-modelled position is supported by the experimental electron density map; higher is
+modelled position is supported by the experimental electron density map. Higher is
 more reliable. It requires structure factors, so it exists only for
-crystallographic structures — not for predicted models.
+crystallographic structures, not for predicted models.
 
 EDIA data is read from `<pdb_id>_final.json` in the same directory as the
-structure. The file is a flat JSON array of per-residue records; the loader keeps
+structure. The file is a flat JSON array of per-residue records. The loader keeps
 only entries whose `compID` is `HOH` or `WAT`, and keys each by
 `(pdb.strandID, pdb.seqNum, pdb.insCode)` to match a water in the structure:
 
@@ -195,10 +195,9 @@ only entries whose `compID` is `HOH` or `WAT`, and keys each by
   "pdb": {"strandID": "A", "seqNum": -1, "insCode": ""}, "seqID": 1}, ...]
 ```
 
-Only `EDIAm` is used; the other fields are ignored. A water with no matching entry
-in the JSON gets `NaN` and **passes** the filter — the comparison is deliberately
-conservative, so an incomplete file drops nothing (`src/dataset.py:782`). The same
-holds for the B-factor filter.
+Only `EDIAm` is used. A water with no matching entry in the JSON gets `NaN` and
+**passes** the filter, so an incomplete file drops nothing. The same holds for the
+B-factor filter.
 
 [PDB-REDO](https://pdb-redo.eu/) entries ship with this data. To generate it
 yourself, use [density-fitness](https://github.com/PDB-REDO/density-fitness),
