@@ -8,8 +8,9 @@ and a confidence scorer that ranks them.
 Each structure becomes a heterogeneous graph with two node types:
 
 - `protein`: ASU atoms, plus symmetry mates and ligands when enabled. Ligand
-  atoms carry `is_ligand` and `residue_index = -1` (no residue embedding, so
-  residue pooling masks them out). `is_mate` marks every non-ASU node. The flow
+  atoms carry `is_ligand` and `residue_index = -1`: they belong to no residue,
+  so they have no ESM row and read a zero embedding.
+  `is_mate` marks every non-ASU node. The flow
   prior anchors on `~is_mate` so sampled waters start where the targets live.
 - `water`: the molecules being predicted.
 
@@ -73,8 +74,9 @@ always active.
 ## Confidence scorer
 
 `ConfidenceGVP` scores each candidate water in `[0, 1]`. It reuses the flow
-generator's backbone with the time conditioning removed (candidates are clean
-samples, not points on a trajectory) and a single scalar head per candidate.
+generator's message-passing backbone with the time conditioning removed (candidates are clean
+samples, not points on a trajectory). Each candidate is passed through the confidence head to 
+optain a single scalar output in the form of a confidence score.
 Because the backbone stays structurally identical, the scorer warm-starts from a
 flow checkpoint (`--init_from`). It uses PW and PP edges only.
 

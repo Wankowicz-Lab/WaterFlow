@@ -11,6 +11,7 @@ WaterFlow is a two-stage Deep Learning model that predicts the positions of orde
 
 ## Table of Contents
 
+- [ACTL](#actl)
 - [Installation](#installation)
   - [System libraries](#system-libraries)
   - [Building an environment from scratch](#building-an-environment-from-scratch)
@@ -34,6 +35,26 @@ WaterFlow is a two-stage Deep Learning model that predicts the positions of orde
   - [Reproducing the released checkpoints](#reproducing-the-released-checkpoints)
   - [Evaluating the flow generator alone](#evaluating-the-flow-generator-alone)
 - [Documentation](#documentation)
+
+## ACTL
+
+In the diffuse namespace, launch the catalog image from this checkout:
+
+```sh
+actl pod up waterflow --profile single --image waterflow --pvc-size 100Gi -n diffuse --yes
+```
+
+The diffuse profile mounts shared storage at `/mnt/diffuse-shared`; the image
+exposes `/mnt/diffuse-shared/waterflow` as `/data` for PDBs, caches,
+checkpoints, outputs, logs, and optional split files. The checkout itself
+syncs to `/home/dev/workspace`, so its `splits/` directory is available without
+copying it to shared storage. The `waterflow` command uses the synced checkout
+when present, while preserving the image's virtual environment.
+
+Overlay changes are validated in this repository. Harbor publishing runs from
+the Astera [`docker-images` WaterFlow workflow](https://github.com/Astera-org/docker-images/actions/workflows/waterflow.yml),
+which accepts a WaterFlow commit and publishes both `:main-actl` and an
+immutable `:sha-<waterflow-commit>` tag.
 
 ## Installation
 

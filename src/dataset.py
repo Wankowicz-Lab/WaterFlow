@@ -119,6 +119,32 @@ def parse_asu_with_biotite(
     return protein_atoms, water_atoms, ligand_atoms
 
 
+def crystal_symmetry_check(struc_path: str) -> str | None:
+    """Say why a file cannot produce symmetry mates, or return None if it can.
+
+    symexp silently yields nothing when the file has no symmetry record, and
+    yields stacked translational copies of the whole structure when the cell
+    is a placeholder (predicted and NMR files often carry CRYST1 1 1 1 P 1).
+    A real crystal cell has at least ~15 cubic Angstroms per atom, a
+    placeholder ~1 total, so a floor of 4 per atom separates them with wide
+    margin.
+    """
+    with pymol2.PyMOL() as pm:
+        cmd = pm.cmd
+        cmd.feedback("disable", "all", "everything")
+        obj = "struct"
+        cmd.load(struc_path, obj)
+        symmetry = cmd.get_symmetry(obj)
+        if symmetry is None:
+            return "no crystal symmetry record"
+        if symmetry[0] * symmetry[1] * symmetry[2] < 4.0 * cmd.count_atoms(obj):
+            return (
+                f"placeholder unit cell {symmetry[0]:g} x {symmetry[1]:g} x "
+                f"{symmetry[2]:g} too small to hold the structure"
+            )
+        return None
+
+
 def get_crystal_contacts_pymol(
     struc_path: str,
     cutoff: float = 5.0,
@@ -152,7 +178,19 @@ def get_crystal_contacts_pymol(
             - 'mate_ligand_coords': (M, 3) whole ligand-mate entities, empty
               unless include_ligands
             - 'mate_ligand_atoms': List of PyMOL atom objects for ligand mates
+
+    Raises:
+        ValueError: If the file has no symmetry record or only a placeholder
+            unit cell, as predicted and NMR structures do.
     """
+    error = crystal_symmetry_check(struc_path)
+    if error is not None:
+        raise ValueError(
+            f"{struc_path}: {error}; cannot build symmetry mates. Run "
+            "this structure with a model trained without mates, e.g. the "
+            "released mates_off checkpoints."
+        )
+
     with pymol2.PyMOL() as pm:
         cmd = pm.cmd
         cmd.reinitialize()

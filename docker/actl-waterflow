@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -d /mnt/diffuse-shared ]; then
+  if ! mkdir -p /mnt/diffuse-shared/waterflow/{pdb,cache,checkpoints,outputs,logs,splits}; then
+    printf 'waterflow: warning: could not initialize shared storage under /mnt/diffuse-shared/waterflow\n' >&2
+  fi
+fi
+
+if [ -d /home/dev/workspace/scripts ]; then
+  export WATERFLOW_APP_DIR=/home/dev/workspace
+fi
+
+exec /app/entrypoint.sh "$@"

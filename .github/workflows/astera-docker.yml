@@ -1,0 +1,38 @@
+name: WaterFlow ACTL overlay validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile.astera
+      - docker/actl-*
+      - docker/entrypoint.sh
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/astera-docker.yml
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile.astera
+      - docker/actl-*
+      - docker/entrypoint.sh
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/astera-docker.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate overlay scripts and inputs
+        run: |
+          set -euo pipefail
+          bash -n docker/entrypoint.sh docker/actl-shell-init.sh docker/actl-waterflow
+          grep -q '^ENTRYPOINT \[\]$' Dockerfile.astera
+          grep -q '^CMD \["bash"\]$' Dockerfile.astera
+          grep -q '^ARG WATERFLOW_BASE_IMAGE=' Dockerfile.astera

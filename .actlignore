@@ -1,0 +1,15 @@
+# Keep experiment artifacts on the diffuse shared volume, not in the synced
+# source checkout.
+data/
+flow_cache/
+wandb/
+logs/
+outputs/
+checkpoints/
+*.ckpt
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.safetensors
+*.wandb

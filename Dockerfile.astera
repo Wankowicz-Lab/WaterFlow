@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1
+# WaterFlow ACTL overlay. The base provides CUDA, the gated ESM3 cache, and
+# /app/.venv; this layer updates its dependencies for this checkout and adds
+# interactive workspace tooling.
+ARG WATERFLOW_BASE_IMAGE=docker.io/diffuseproject/waterflow@sha256:cfa4d600c88adf5223814e2c1861de85bf6047fe279c0df44f44cb4a8e6c65dc
+FROM ${WATERFLOW_BASE_IMAGE}
+
+USER root
+
+ARG ACTL_PACKAGES="bash ca-certificates curl wget rsync tini vim nano emacs-nox git zsh htop tmux ncdu iputils-ping dnsutils"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/home/dev \
+    XDG_CONFIG_HOME=/home/dev/.config \
+    XDG_CACHE_HOME=/home/dev/.cache \
+    XDG_DATA_HOME=/home/dev/.local/share \
+    SHELL=/bin/bash \
+    VIRTUAL_ENV=/app/.venv \
+    PATH=/app/.venv/bin:${PATH} \
+    PYTHONPATH=/home/dev/workspace:/app \
+    WATERFLOW_PDB_DIR=/data/pdb \
+    WATERFLOW_CACHE_DIR=/data/cache \
+    WATERFLOW_CHECKPOINT_DIR=/data/checkpoints \
+    WATERFLOW_OUTPUT_DIR=/data/outputs \
+    WATERFLOW_LOG_DIR=/data/logs \
+    WATERFLOW_SPLITS_DIR=/data/splits
+
+COPY pyproject.toml uv.lock /app/
+RUN cd /app && uv sync --frozen --no-install-project
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ${ACTL_PACKAGES} \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /home/dev/.config /home/dev/.cache /home/dev/.local/share /home/dev/workspace /etc/zsh \
+    && rm -rf /data \
+    && ln -s /mnt/diffuse-shared/waterflow /data
+
+COPY docker/entrypoint.sh /app/entrypoint.sh
+COPY docker/actl-shell-init.sh /usr/local/share/actl-waterflow-shell-init.sh
+COPY docker/actl-waterflow /usr/local/bin/waterflow
+
+RUN chmod 0755 /app/entrypoint.sh /usr/local/bin/waterflow \
+    && chmod 0644 /usr/local/share/actl-waterflow-shell-init.sh \
+    && printf '\n# Astera WaterFlow workspace\n[ -r /usr/local/share/actl-waterflow-shell-init.sh ] && . /usr/local/share/actl-waterflow-shell-init.sh\n' >> /etc/bash.bashrc \
+    && printf '\n# Astera WaterFlow workspace\n[ -r /usr/local/share/actl-waterflow-shell-init.sh ] && . /usr/local/share/actl-waterflow-shell-init.sh\n' >> /etc/zsh/zshrc \
+    && for cmd in waterflow python curl wget rsync tini vim nano emacs git zsh htop tmux ncdu ping dig; do command -v "${cmd}" >/dev/null; done
+
+WORKDIR /home/dev
+ENTRYPOINT []
+CMD ["bash"]

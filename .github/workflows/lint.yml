@@ -10,28 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: testing
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.head_ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install ruff
         run: pip install ruff
 
-      - name: Auto-fix with ruff
+      - name: Check formatting and lint
         run: |
-          ruff check --fix .
-          ruff format .
-
-      - name: Commit ruff fixes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Auto-commit ruff fixes [skip ci]"
-          commit_username: "Autoformatter"
-          commit_email: "actions@github.com"
+          ruff check .
+          ruff format --check .
 
   ty:
     runs-on: ubuntu-latest

@@ -20,6 +20,7 @@ from scripts.predict_waters import (
     load_checkpoint,
     parse_args,
     predict_structures,
+    resolve_ckpt_dir,
     select_waters,
 )
 from src.confidence import build_confidence_model, ConfidenceGVP
@@ -235,6 +236,37 @@ class TestCheckEmbeddings:
         emb.mkdir()
         (emb / "protein.pt").touch()
         _check_embeddings(["some/dir/protein.cif"], "esm", str(tmp_path))
+
+
+@pytest.mark.unit
+class TestResolveCkptDir:
+    def test_explicit_dir_skips_detection(self, monkeypatch):
+        def refuse(path):
+            raise AssertionError("detection must not run for an explicit dir")
+
+        monkeypatch.setattr("scripts.predict_waters.crystal_symmetry_check", refuse)
+        assert resolve_ckpt_dir("my_ckpts", ["a.pdb"]) == Path("my_ckpts")
+
+    def test_all_symmetric_picks_mates(self, monkeypatch):
+        monkeypatch.setattr(
+            "scripts.predict_waters.crystal_symmetry_check", lambda p: None
+        )
+        assert resolve_ckpt_dir(None, ["a.pdb", "b.pdb"]).name == "mates"
+
+    def test_none_symmetric_falls_back_to_mates_off(self, monkeypatch):
+        monkeypatch.setattr(
+            "scripts.predict_waters.crystal_symmetry_check",
+            lambda p: "no crystal symmetry record",
+        )
+        assert resolve_ckpt_dir(None, ["a.pdb", "b.pdb"]).name == "mates_off"
+
+    def test_mixed_inputs_are_refused(self, monkeypatch):
+        monkeypatch.setattr(
+            "scripts.predict_waters.crystal_symmetry_check",
+            lambda p: None if p == "good.pdb" else "no crystal symmetry record",
+        )
+        with pytest.raises(ValueError, match="mix"):
+            resolve_ckpt_dir(None, ["good.pdb", "af.pdb"])
 
 
 @pytest.mark.integration

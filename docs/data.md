@@ -1,12 +1,12 @@
 # Data preparation
 
-WaterFlow reads PDB or mmCIF files and preprocesses them into cached graph
-representations. This document covers the input layout, split files, the cache
+WaterFlow reads PDB or mmCIF files and preprocesses each into a cached all-atom graph
+representation. This document covers the input layout, split files, the cache
 structure, and the quality filters.
 
 ## Input structure files
 
-Structures live one per directory under `--base_pdb_dir`:
+Structures are stored one per directory under `--base_pdb_dir`:
 
 ```
 <base_pdb_dir>/
@@ -63,9 +63,11 @@ Included only with `--include_mates`. A no-mates cache never invokes PyMOL.
   or an already-kept mate atom are dropped. Mate ligands are judged whole, so a
   ligand is never fragmented.
 - A mate inherits its source residue's `(chain, res_id, ins_code)`, so it picks up
-  that residue's ESM row through `emb_res_idx` instead of a zero vector, and it
-  joins the distance-filter reference, so a water in a crystal contact is not dropped
-  as solvent-far.
+  that residue's ESM row through `emb_res_idx` instead of a zero vector. Mate atoms
+  also count as protein for the water–protein distance filter
+  (`--max_protein_dist`, see [Per-water filters](#per-water-filters)), so a water
+  sitting in a crystal contact such that it is close to a mate but far from the ASU, is not
+  dropped as being too far from the protein.
 
 ## Cache structure
 
@@ -92,13 +94,19 @@ Preprocessed data is cached under `--processed_dir` in three layers:
     └── <pdb_id>_final.pt
 ```
 
-Embedding files are keyed by split entry (`<pdb_id>_final`) when generated from a
-`--pdb_list`. Generating from raw files with `--struc` keys them by file stem
-instead, which is how prediction looks them up. See the
+SLAE embeddings ([preprint](https://www.biorxiv.org/content/10.1101/2025.10.03.680398v1))
+are legacy: the shipped checkpoints and current runs use ESM, and the `slae/`
+layer exists only when `generate_slae_embeddings.py` is run for an older
+checkpoint. See [model.md](model.md#encoder-types).
+
+Embedding files are named after the split entry (`<pdb_id>_final`) when generated
+from a `--pdb_list`. Generating from raw files with `--struc` instead names them
+after the input file's stem, i.e. the filename without its extension, e.g. `1abc` for
+`1abc.cif` — which is how prediction looks them up. See the
 [README](../README.md#step-3-generate-esm-embeddings).
 
-The `protein_*` names predate mates and ligands: `N` is the total node count and
-these arrays hold every node. Node order is
+Despite the `protein_` prefix, these arrays hold **every** context node. ASU
+protein, symmetry mates, and the ligands. `N` is the total count of these nodes.  Node order is
 `[ASU protein | mate protein | ASU ligand | mate ligand]`, recovered with the two
 masks:
 
@@ -128,17 +136,30 @@ The base name comes from `--geometry_cache_name` (default `geometry`).
 
 ### Filter metadata
 
-Filtering happens *before* the cache is written, so the thresholds are a property
-of the directory, not of the run reading it. The `.pt` files record almost none of
-them (`max_neighbors` is the exception). Each geometry directory carries a
-`_filter_meta.json` recording the per-water filters and their toggles, the
-structure-level checks (`min_water_residue_ratio`, `max_com_dist`,
-`max_clash_fraction`, `clash_dist`, `interface_dist_threshold`), and the graph
-parameters behind the cached PP edges (`cutoff`, `max_neighbors`).
+Quality filtering runs during preprocessing, so a geometry cache directory only
+contains what passed the filter settings in effect when it was built. The `.pt`
+files don't record those settings. Each geometry cache directory carries
+a `_filter_meta.json` listing how it was built:
 
-> These two are the `ProteinWaterDataset` defaults (8.0 / 256), **not** whatever
-> `--cutoff` / `--max_neighbors` you passed to the trainer. Those flags only
-> configure the model. Changing them therefore never invalidates a cache.
+- the per-water filters and their on/off toggles,
+- the structure-level checks (`min_water_residue_ratio`, `max_com_dist`,
+  `max_clash_fraction`, `clash_dist`, `interface_dist_threshold`),
+- the `cutoff` and `max_neighbors` used to build the cached protein–protein (PP)
+  edges.
+
+> **Note:** the `cutoff` / `max_neighbors` in this file are
+> not the trainer's `--cutoff` / `--max_neighbors` flags.
+>
+> - In the cache, PP edges are built once at preprocessing time with the
+>   `ProteinWaterDataset` defaults: 8.0 Å and 256 neighbors. These are the values
+>   `_filter_meta.json` records.
+> - The trainer's `--cutoff` / `--max_neighbors` configure the model, not the
+>   cache: they set the radius and neighbor cap for the water-touching edges
+>   (PW, WW, WP) that the model rebuilds on every forward pass (see
+>   [model.md](model.md#edge-construction)).
+>
+> Because the trainer flags never touch the cached PP edges, changing them never
+> invalidates a cache.
 
 The first run with `preprocess=True` writes this file. Every later run compares
 against it and **refuses to start** on a mismatch rather than mixing differently
@@ -164,7 +185,7 @@ These decide whether a structure is included at all:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `--max_com_dist` | `25.0` | Max protein–water center-of-mass distance (Å) |
+| `--max_com_dist` | `25.0` | Max distance (Å) between the protein's center of mass and the center of mass of all waters |
 | `--max_clash_fraction` | `0.05` | Max fraction of waters clashing with protein |
 | `--clash_dist` | `2.0` | Distance threshold for a clash (Å) |
 | `--min_water_residue_ratio` | `0.1` | Minimum waters-per-residue ratio |
@@ -180,9 +201,10 @@ These remove individual low-quality waters and can each be toggled off:
 | `--min_edia` | `0.4` | `--no_filter_by_edia` | Remove waters with low EDIA scores |
 | `--max_bfactor_zscore` | `2.0` | `--no_filter_by_bfactor` | Remove waters with high B-factor |
 
-**EDIA** (Electron Density Interpretation of Atoms) measures how well an atom's
-modelled position is supported by the experimental electron density map. Higher is
-more reliable. It requires structure factors, so it exists only for
+**EDIA** (electron density support for individual atoms;
+[Meyder et al. 2017](https://doi.org/10.1021/acs.jcim.7b00391)) measures how well
+an atom's modelled position is supported by the experimental electron density map.
+Higher is more reliable. It requires structure factors, so it exists only for
 crystallographic structures, not for predicted models.
 
 EDIA data is read from `<pdb_id>_final.json` in the same directory as the
