@@ -1105,9 +1105,40 @@ class TestLigandNodeIntegration:
         assert (data["protein"].residue_index[~lig_mask] >= 0).all()
 
 
+def write_minimal_pdb(path, cryst1=None):
+    """Write five CA atoms in a row, optionally under a CRYST1 record."""
+    lines = [cryst1] if cryst1 else []
+    for i in range(5):
+        lines.append(
+            f"ATOM  {i + 1:>5}  CA  ALA A{i + 1:>4}    "
+            f"{10.0 + 3.8 * i:8.3f}{10.0:8.3f}{10.0:8.3f}  1.00 20.00           C"
+        )
+    lines.append("END")
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
 @pytest.mark.integration
 class TestGetCrystalContactsPymol:
     """Tests for PyMOL crystal contact detection."""
+
+    def test_rejects_missing_symmetry_record(self, tmp_path):
+        """Without a CRYST1 record symexp would silently return nothing and
+        the graph would lack mates unnoticed, so the call must fail instead."""
+        pdb = write_minimal_pdb(tmp_path / "nocryst.pdb")
+        with pytest.raises(ValueError, match="no crystal symmetry record"):
+            get_crystal_contacts_pymol(pdb, cutoff=8.0)
+
+    def test_rejects_placeholder_cell(self, tmp_path):
+        """With the 1 A dummy cell that predicted structures carry, symexp
+        would tile the structure onto itself, so the call must fail instead."""
+        pdb = write_minimal_pdb(
+            tmp_path / "af_p1.pdb",
+            cryst1="CRYST1    1.000    1.000    1.000  90.00  90.00  90.00 "
+            "P 1           1",
+        )
+        with pytest.raises(ValueError, match="placeholder unit cell"):
+            get_crystal_contacts_pymol(pdb, cutoff=8.0)
 
     def test_returns_expected_keys(self, pdb_6eey):
         """Should return dictionary with expected keys."""
