@@ -93,7 +93,7 @@ Preprocessed data is cached under `--processed_dir` in three layers:
 ```
 
 Embedding files are keyed by split entry (`<pdb_id>_final`) when generated from a
-`--split_file`. Generating from raw files with `--struc` keys them by file stem
+`--pdb_list`. Generating from raw files with `--struc` keys them by file stem
 instead, which is how prediction looks them up. See the
 [README](../README.md#step-3-generate-esm-embeddings).
 

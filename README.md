@@ -18,7 +18,7 @@ WaterFlow is a two-stage Deep Learning model that predicts the positions of orde
   - [Step 1: Fetch the model weights](#step-1-fetch-the-model-weights)
   - [Step 2: Pick a checkpoint model set](#step-2-pick-a-checkpoint-model-set)
   - [Step 3: Generate ESM embeddings](#step-3-generate-esm-embeddings)
-  - [Step 4: Predict](#step-4-predict)
+  - [Step 4: Predict Water Molecules](#step-4-predict-water-molecules)
   - [Predicting on many structures](#predicting-on-many-structures)
   - [Reusing work between runs](#reusing-work-between-runs)
   - [Selecting the final waters](#selecting-the-final-waters)
@@ -136,9 +136,9 @@ Each directory holds the same four files: `flow.pt`, `confidence.pt`, `flow_conf
 `confidence_config.json`. To use your own models, point `--ckpt_dir` at a directory with those
 four names. See [Training your own models](#training-your-own-models).
 
-> **Path resolution.** `--ckpt_dir` is an ordinary path resolved against your **current working
-> directory**, not the repository root. The default `checkpoints/mates` therefore only works
-> when you run from the top of the repo. From anywhere else, pass an absolute path such as
+> **Path resolution.** The default `checkpoints/mates` resolves inside the repository, so it
+> works from any working directory. A custom `--ckpt_dir` is an ordinary path resolved against
+> your **current working directory**; from elsewhere, pass an absolute path such as
 > `--ckpt_dir /path/to/WaterFlow/checkpoints/mates`.
 
 ### Step 3: Generate ESM embeddings
@@ -149,38 +149,46 @@ embedding step in the repo. Prediction and training both load cached embeddings 
 generate them on the fly, so run this script once for every structure you need, whether
 predicting or training.
 
+The first run downloads the `esm3-open` weights from HuggingFace (network access, plus a
+HuggingFace login if the model is gated for your account). Later runs reuse the local copy.
+
 ```bash
 uv run python -m scripts.generate_esm_embeddings \
     --struc <protein>.cif \
-    --cache_dir <cache_root>
+    --processed_dir <cache_root>
 ```
 
 This writes `<cache_root>/esm/<protein>.pt`, keyed by the input's **file stem**.
 
 > **`<protein>`** is your input file's stem, e.g. `1abc` for `1abc.cif`. The stem names the
 > cached embedding and every output file, and prediction looks the embedding up by that same
-> stem, so `<protein>.cif` and `<protein>.pdb` both pair with `esm/<protein>.pt`.
+> stem, so `<protein>.cif` or `<protein>.pdb` both pair with `esm/<protein>.pt`.
 
-Embed several structures in one pass by listing them after `--struc` (a shell glob works too),
-then predict them together with `--pdb_list` (see
+`--struc` accepts any number of files, so a list of structures embeds in one pass. A shell
+glob does the same thing, since the shell expands `--struc structures/*.cif` into that file
+list before the script sees it. Predict the batch afterwards with `--pdb_list` (see
 [Predicting on many structures](#predicting-on-many-structures)):
 
 ```bash
 uv run python -m scripts.generate_esm_embeddings \
     --struc a.cif b.cif c.pdb \
-    --cache_dir <cache_root>
+    --processed_dir <cache_root>
 ```
 
-Pass the cache root as `--processed_dir <cache_root>` when predicting. The first run downloads the
-`esm3-open` weights from HuggingFace (network access, plus a HuggingFace login if the model is
-gated for your account). Later runs reuse the local copy.
+Pass the ESM embedding cache root as `--processed_dir <cache_root>` when predicting. A cache root ready for
+prediction looks like:
+
+```
+<cache_root>/
+└── esm/
+    ├── 1abc.pt        # one .pt per structure, named by file stem
+    └── 2xyz.pt
+```
 
 > For training, the same script takes a split file instead of raw paths
-> (`--split_file <split> --base_pdb_dir <dir>`). See [Precompute embeddings](#1-precompute-embeddings).
-> The `gvp` encoder needs no embeddings and no `--processed_dir`, but none of the shipped
-> checkpoints use it.
+> (`--pdb_list <split> --base_pdb_dir <dir>`). See [Precompute embeddings](#1-precompute-embeddings).
 
-### Step 4: Predict
+### Step 4: Predict Water Molecules
 
 ```bash
 uv run python -m scripts.predict_waters \
@@ -189,16 +197,17 @@ uv run python -m scripts.predict_waters \
     --out_dir out/
 ```
 
-To run without symmetry mates, add `--ckpt_dir checkpoints/mates_off`.
+To run without symmetry mates, add `--ckpt_dir checkpoints/mates_off`. Mates are generated
+from the crystal symmetry in the input header (`CRYST1` in PDB, the cell and symmetry records
+in mmCIF). With the default mates checkpoint, a file without that information still runs to
+completion, but no mates can be generated and the model predicts from the ASU alone. 
+Use `checkpoints/mates_off` for such files (predicted structures,
+stripped headers). (Issue #114)
 
-If an embedding is missing, prediction stops immediately and names the files it could not find,
-rather than failing later inside graph construction.
+What happens during the structure processing for prediction:
 
-What happens to your structure along the way:
-
-- **Existing waters are removed.** They are what the model predicts, so the graph starts with
-  no water nodes.
-- **Protein and hets are kept** (ligands, ions, cofactors, nucleic acids). Coordinates are
+- **Existing waters are removed.**
+- **Protein and het-atoms are kept** (ligands, ions, cofactors, nucleotides, nucleic acids). Coordinates are
   centered on the ASU protein centroid, and symmetry mates are added when the selected
   checkpoint used them.
 - Predicted waters are returned to the **input coordinate frame** before writing.
@@ -223,23 +232,21 @@ Generate them all first (Step 3). Structures are processed in batches of `--batc
 
 ### Reusing work between runs
 
-`--geometry_cache <dir>` caches the flow inputs (inference graphs) at `<dir>/<name>.pt` and the
-flow outputs (sampled candidates) under `<dir>/candidates/`. Both are reused when present, so a
-re-run skips graph construction and flow sampling for structures already cached. This matters
-little for one small protein and a lot for repeated runs over many structures, for example when
-trying different `--selection` settings or thresholds.
+`--predict_cache <root>` caches the flow inputs (inference graphs) and the flow outputs
+(sampled candidates). Both are reused when present, so a re-run skips graph construction and
+flow sampling for structures already cached. This affects runtime only, not the results.
 
-Entries written with symmetry mates carry a `_mates` suffix (`<name>_mates.pt`), so mates and
-`mates_off` runs can share one cache directory. Candidate files additionally carry the
-checkpoint directory name, integration method, step count and water ratio
-(`<name>_mates_mates_euler20_r8.0.pt`), so changing any of those samples fresh candidates
-instead of reusing stale ones. Confidence scoring and selection are never cached and run on
-every call.
+Each checkpoint and sampling configuration gets its own subdirectory under the root, named
+`<ckpt_dir name>_ckpt_<mates|nomates>_<method><steps>_r<water_ratio>`. A default run
+(`checkpoints/mates`, mates on, euler, 20 steps, water ratio 8) therefore writes to
+`mates_ckpt_mates_euler20_r8/`, and runs with different settings never mix files. Inside it,
+graphs are stored as `<name>.pt` and candidates under `candidates/`. When every requested
+candidate is already cached, the flow checkpoint is not loaded at all. Confidence scoring and
+selection are never cached and run on every call.
 
 ### Selecting the final waters
 
-This is the main knob that determines how many waters you predict. Both modes sample `--water_ratio × num_residues` candidates and score
-each one, then cluster them in two rounds:
+The selection flag is the main knob that determines how many waters you predict. Both modes sample `--water_ratio × num_residues` candidates and score them with the confidence model, and then cluster them in two rounds:
 
 1. **Absorb.** Seed a cluster with the highest-confidence unassigned candidate, absorb every
    unassigned candidate within the van der Waals radius of oxygen (1.52 Å), and emit a
@@ -247,7 +254,7 @@ each one, then cluster them in two rounds:
 2. **Merge.** Run non-maximum suppression over those centroids, dropping the lower-confidence
    member of any pair still within the same radius.
 
-The modes differ in how the surviving centroids are culled:
+The modes differ in how the surviving centroids are removed:
 
 | `--selection` | Rule | Use when |
 |---|---|---|
@@ -255,11 +262,16 @@ The modes differ in how the surviving centroids are culled:
 | `density` | Cluster with no cutoff, then keep the top `floor(--density_ratio × ASU_residues)` centroids by confidence (default ratio `0.6`). | You want a hydration level tied to protein size rather than an absolute score. |
 
 Each mode accepts only its own knob: `--confidence_threshold` is rejected under `density`, and
-`--density_ratio` is rejected under `confidence`.
+`--density_ratio` is rejected under `confidence`. 
+
+For predicted or low-resolution structures, prefer `--selection density`. The confidence
+scores are calibrated on high-quality crystal structures, so on inputs far from that
+distribution a fixed `0.5` cutoff can keep far too many or too few waters, while a count tied
+to protein size stays reasonable.
 
 > **`--water_ratio` sets how many candidates are *drawn*** (× the graph's residue count, which
 > mates roughly double), **while `--density_ratio` sets how many are *kept* after scoring candidates** (× ASU residues
-> only, so mates don't change it).
+> only, so mates don't change it and it only scales with the size of the ASU).
 
 ### Outputs
 
@@ -273,8 +285,8 @@ Per structure, in the input coordinate frame:
 
 | Argument | Default | Description |
 |---|---|---|
-| `--ckpt_dir` | `checkpoints/mates` | Directory with `flow.pt`, `confidence.pt`, `flow_config.json`, `confidence_config.json`, resolved against your working directory |
-| `--struc` / `--pdb_list` | one required | A single structure file, or a list of names under `--base_pdb_dir` |
+| `--ckpt_dir` | `checkpoints/mates` | Directory with `flow.pt`, `confidence.pt`, `flow_config.json`, `confidence_config.json`; the default is inside the repo, a custom path is resolved against your working directory |
+| `--struc` / `--pdb_list` | one required | One or more structure files, or a list of names under `--base_pdb_dir` |
 | `--base_pdb_dir` | none | Directory that `--pdb_list` names resolve against |
 | `--out_dir` | required | Output directory |
 | `--out_format` | `.pdb` | Written structure format: `.pdb` or `.cif` |
@@ -286,7 +298,7 @@ Per structure, in the input coordinate frame:
 | `--method` | `euler` | Integration method: `euler` or `rk4` |
 | `--include_mates` | model's setting | Force symmetry mates on or off (`--no-include_mates` to disable) |
 | `--processed_dir` | none | Embedding cache root for `esm`/`slae` (unused for `gvp`) |
-| `--geometry_cache` | none | Cache inference graphs and candidates for reuse |
+| `--predict_cache` | none | Root directory to reuse inference graphs and sampled candidates across runs |
 | `--batch_size` | `4` | Structures per batch |
 | `--device` | `cuda` | Compute device |
 | `--log_level` | `INFO` | Logging verbosity |
@@ -297,8 +309,8 @@ Per structure, in the input coordinate frame:
 |---|---|
 | `ImportError: libGL.so.1: cannot open shared object file` | PyMOL's OpenGL library is missing. `sudo apt-get install -y libgl1` (see [System libraries](#system-libraries)). |
 | Checkpoint fails to load, `.pt` is only a few hundred bytes | Git LFS pointers were never resolved. Run `git lfs install && git lfs pull`. |
-| `Missing esm embeddings under ... for [...]` | Generate them for those files first with `generate_esm_embeddings --struc <files> --cache_dir <cache_root>`, and make sure `--processed_dir` points at that same cache root. |
-| `flow_config.json` not found | `--ckpt_dir` was resolved against the wrong directory. Run from the repository root or pass an absolute path. |
+| `Missing esm embeddings under ... for [...]` | Generate them for those files first with `generate_esm_embeddings --struc <files> --processed_dir <cache_root>`, and make sure `--processed_dir` points at that same cache root. |
+| `flow_config.json` not found | A custom `--ckpt_dir` was resolved against the wrong directory. Pass an absolute path. |
 | `<name>: no waters selected` | Every candidate scored below `--confidence_threshold`. Lower it, or switch to `--selection density`. |
 
 ## Training your own models
@@ -373,9 +385,9 @@ them by split entry, so point the script at the split file rather than raw paths
 
 ```bash
 uv run python -m scripts.generate_esm_embeddings \
-    --split_file splits/water_pdbs.txt \
+    --pdb_list splits/water_pdbs.txt \
     --base_pdb_dir <pdb_dir> \
-    --cache_dir <cache_root>
+    --processed_dir <cache_root>
 ```
 
 This writes `<cache_root>/esm/<pdb_id>_final.pt` (e.g. `6eey_final` → `esm/6eey_final.pt`).
@@ -474,11 +486,12 @@ Then predict with `--ckpt_dir my_ckpts`.
 
 ### Reproducing the released checkpoints
 
-The commands below are the recipe recorded in the shipped
-`checkpoints/*/flow_config.json` and `confidence_config.json`, reduced to the flags that differ
-from current defaults. They reproduce every recorded setting. Path-valued keys in those configs
-(`processed_dir`, `save_dir`, `resume`, `init_from`, ...) are recorded as `null`. Prediction
-never reads them.
+Each shipped checkpoint directory records the exact settings of its training run in
+`flow_config.json` and `confidence_config.json`. The commands below rerun those settings. Only
+the flags whose recorded value differs from the current defaults are spelled out; every other
+recorded setting is already the default. Path-valued keys in those configs (`processed_dir`,
+`save_dir`, `resume`, `init_from`, ...) are recorded as `null`, and prediction never reads
+them.
 
 **Flow generator, `checkpoints/mates`:**
 
@@ -577,11 +590,11 @@ precision, recall, and RMSD.
 
 ```bash
 uv run python -m scripts.inference \
-    --run_dir <flow_run> \
+    --flow_run_dir <flow_run> \
     --pdb_list splits/test_list.txt \
     --base_pdb_dir <pdb_dir> \
     --processed_dir <cache_root> \
-    --output_dir ./eval \
+    --out_dir ./eval \
     --method rk4 \
     --num_steps 100
 ```
