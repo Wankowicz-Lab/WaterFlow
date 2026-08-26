@@ -59,9 +59,6 @@ from src.utils import setup_logging_for_tqdm
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5  # confidence mode
 DEFAULT_DENSITY_RATIO = 0.6  # density mode, waters per ASU residue
 
-# Anchor the shipped-checkpoint default to the repo, not the working directory.
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
 
 # ---------------------------------------------------------------------------
 # Model loading
@@ -331,14 +328,14 @@ def resolve_ckpt_dir(explicit: str | None, paths: list[str]) -> Path:
     errors = {p: crystal_symmetry_check(p) for p in paths}
     bad = [p for p, why in errors.items() if why is not None]
     if not bad:
-        return REPO_ROOT / "checkpoints" / "mates"
+        return Path("checkpoints/mates")
     if len(bad) < len(paths):
         names = [Path(p).name for p in bad]
         raise ValueError(
             f"Inputs mix structures with and without usable crystal symmetry "
             f"({names} lack it); split them into separate runs."
         )
-    off_dir = REPO_ROOT / "checkpoints" / "mates_off"
+    off_dir = Path("checkpoints/mates_off")
     needed = ("flow.pt", "confidence.pt", "flow_config.json", "confidence_config.json")
     missing = [f for f in needed if not (off_dir / f).exists()]
     if missing:
