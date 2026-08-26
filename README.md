@@ -98,7 +98,7 @@ embeddings, and predict waters.
 
 The pretrained weights live in `checkpoints/` and are stored with
 [Git LFS](https://git-lfs.com). A plain `git clone` succeeds without LFS, but each `.pt`
-arrives as a few-hundred-byte text pointer instead of the ~16 MB model, and loading it fails.
+will then exist as a few-hundred-byte text pointer instead of the ~16 MB model, and loading it fails.
 
 Install Git LFS if you do not have it:
 
@@ -614,6 +614,8 @@ ground truth are then skipped.
   construction.
 - [docs/training.md](docs/training.md): full argument reference for the flow and confidence
   trainers, DDP, checkpoints, and W&B.
+- [Supplementary data on Zenodo](https://doi.org/10.5281/zenodo.22046933): metadata for the
+  training, validation, and holdout datasets.
 
 <p align="center">
   <img src="figures/inference_sweep.gif" alt="Flow ODE integration sweeping candidate waters from the prior to final kept waters" width="900">
