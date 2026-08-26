@@ -17,6 +17,11 @@ syncs to `/home/dev/workspace`, so its `splits/` directory is available without
 copying it to shared storage. The `waterflow` command uses the synced checkout
 when present, while preserving the image's virtual environment.
 
+Overlay changes are validated in this repository. Harbor publishing runs from
+the Astera [`docker-images` WaterFlow workflow](https://github.com/Astera-org/docker-images/actions/workflows/waterflow.yml),
+which accepts a WaterFlow commit and publishes both `:main-actl` and an
+immutable `:sha-<waterflow-commit>` tag.
+
 ## Project Structure
 
 ```
