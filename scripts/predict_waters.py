@@ -16,8 +16,9 @@ For esm/slae encoders the protein embeddings must already be in
 
 Models are loaded from a --ckpt_dir holding flow.pt, confidence.pt,
 flow_config.json and confidence_config.json. It defaults to the mates models
-shipped in the repo (checkpoints/mates); pass checkpoints/mates_off to run
-without symmetry mates.
+shipped in the repo (checkpoints/mates), or to checkpoints/mates_off when no
+input has usable crystal symmetry (predicted structures); pass a directory to
+choose one yourself.
 
 Usage (the default models use esm, so embeddings come first):
     python -m scripts.generate_esm_embeddings --struc protein.cif --processed_dir cache/
@@ -48,7 +49,7 @@ from tqdm import tqdm
 from scripts.inference import build_model_from_config, run_inference_batch
 from src.confidence import build_confidence_model, cluster_waters_vdw, ConfidenceGVP
 from src.confidence_dataset import _oxygen_features
-from src.dataset import parse_asu_with_biotite
+from src.dataset import crystal_symmetry_check, parse_asu_with_biotite
 from src.flow import FlowMatcher
 from src.inference_graph import build_inference_graph
 from src.structure_io import merge_waters, read_space_group, write_structure
@@ -317,6 +318,43 @@ def _collect_struc_paths(args: argparse.Namespace) -> list[str]:
     return paths
 
 
+def resolve_ckpt_dir(explicit: str | None, paths: list[str]) -> Path:
+    """Pick the checkpoint directory when the user did not name one.
+
+    The shipped mates models expect crystal symmetry in the input. When no
+    input has any, fall back to the shipped mates_off models so predicted
+    structures work out of the box. A mix of inputs with and without symmetry
+    is refused: one model cannot serve both, so such runs must be split.
+    """
+    if explicit is not None:
+        return Path(explicit)
+    errors = {p: crystal_symmetry_check(p) for p in paths}
+    bad = [p for p, why in errors.items() if why is not None]
+    if not bad:
+        return REPO_ROOT / "checkpoints" / "mates"
+    if len(bad) < len(paths):
+        names = [Path(p).name for p in bad]
+        raise ValueError(
+            f"Inputs mix structures with and without usable crystal symmetry "
+            f"({names} lack it); split them into separate runs."
+        )
+    off_dir = REPO_ROOT / "checkpoints" / "mates_off"
+    needed = ("flow.pt", "confidence.pt", "flow_config.json", "confidence_config.json")
+    missing = [f for f in needed if not (off_dir / f).exists()]
+    if missing:
+        raise ValueError(
+            f"No input has usable crystal symmetry and the mates_off fallback "
+            f"is missing {missing} under {off_dir}; pass --ckpt_dir with "
+            "models trained without mates."
+        )
+    example = bad[0]
+    logger.warning(
+        f"No input has usable crystal symmetry ({Path(example).name}: "
+        f"{errors[example]}); switching to the mates_off models"
+    )
+    return off_dir
+
+
 def _check_embeddings(
     paths: list[str], encoder_type: str, processed_dir: str | None
 ) -> None:
@@ -341,10 +379,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--ckpt_dir",
-        default=str(REPO_ROOT / "checkpoints" / "mates"),
+        default=None,
         help="Directory holding flow.pt, confidence.pt, flow_config.json and "
-        "confidence_config.json. Default: the mates models shipped in the repo; "
-        "pass checkpoints/mates_off to run without symmetry mates.",
+        "confidence_config.json. Default: the mates models shipped in the repo, "
+        "or the mates_off models when no input has usable crystal symmetry.",
     )
 
     src = p.add_mutually_exclusive_group(required=True)
@@ -439,7 +477,8 @@ def main() -> None:
     setup_logging_for_tqdm(level=args.log_level)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
-    ckpt_dir = Path(args.ckpt_dir)
+    paths = _collect_struc_paths(args)
+    ckpt_dir = resolve_ckpt_dir(args.ckpt_dir, paths)
     flow_config = json.loads((ckpt_dir / "flow_config.json").read_text())
     conf_config = json.loads((ckpt_dir / "confidence_config.json").read_text())
     conf_config = conf_config.get("flow_config", conf_config)  # confidence runs nest it
@@ -461,7 +500,6 @@ def main() -> None:
             f"built for {flow_encoder!r}; use checkpoints whose encoders match."
         )
 
-    paths = _collect_struc_paths(args)
     _check_embeddings(paths, flow_encoder, args.processed_dir)
 
     # Cache subdir named by every setting that shapes its files, so runs with
