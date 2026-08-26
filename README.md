@@ -200,9 +200,11 @@ uv run python -m scripts.predict_waters \
 To run without symmetry mates, add `--ckpt_dir checkpoints/mates_off`. Mates are generated
 from the crystal symmetry in the input header (`CRYST1` in PDB, the cell and symmetry records
 in mmCIF). With the default mates checkpoint, a file without that information still runs to
-completion, but no mates can be generated and the model predicts from the ASU alone. 
-Use `checkpoints/mates_off` for such files (predicted structures,
-stripped headers). (Issue #114)
+completion, but no mates can be generated and the model predicts from the ASU alone. This does not affect
+prediction quality and is equivalent to predicting with the mates-off model, but placeholder symmetry information 
+could produce incorrect mates and hurt performance. Thus it is recommended to use `checkpoints/mates_off` 
+for such files (predicted structures,
+stripped headers). 
 
 What happens during the structure processing for prediction:
 
