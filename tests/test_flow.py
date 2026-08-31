@@ -868,7 +868,7 @@ class TestFlowMatcher:
         same (small) step count -- i.e. RK4's higher order converges faster."""
         flow_matcher.model = _LinearDecayVelocity(k=1.0).to(device)
 
-        def run(method: str, num_steps: int, seed: int):
+        def run(method: str, num_steps: int, seed: int, trajectory: bool = False):
             # Same seed => same prior noise (the integration's only randomness),
             # so the runs are compared from identical initial positions.
             gen = torch.Generator(device=device).manual_seed(seed)
@@ -877,22 +877,23 @@ class TestFlowMatcher:
                 simple_hetero_data,
                 num_steps=num_steps,
                 device=str(device),
-                return_trajectory=True,
+                return_trajectory=trajectory,
                 generator=gen,
             )[0]
 
         seed = 1234
+        # The prior is drawn before the first step, so a 2-step run exposes the
+        # same initial noise the long runs start from, without keeping 2000
+        # frames alive (each one copies to CPU and converts to NumPy).
+        x0_euler = run("euler", num_steps=2, seed=seed, trajectory=True)["trajectory"][
+            0
+        ]
+        x0_rk4 = run("rk4", num_steps=2, seed=seed, trajectory=True)["trajectory"][0]
+        np.testing.assert_allclose(x0_rk4, x0_euler, atol=1e-5)
+
         euler_fine = run("euler", num_steps=2000, seed=seed)
         rk4_coarse = run("rk4", num_steps=21, seed=seed)
         euler_coarse = run("euler", num_steps=21, seed=seed)
-
-        # Identical initial noise across the three runs (guards the comparison).
-        np.testing.assert_allclose(
-            rk4_coarse["trajectory"][0], euler_fine["trajectory"][0], atol=1e-5
-        )
-        np.testing.assert_allclose(
-            euler_coarse["trajectory"][0], euler_fine["trajectory"][0], atol=1e-5
-        )
 
         reference = euler_fine["water_pred"]
         # Coarse RK4 converges to the fine-step Euler solution.
