@@ -625,6 +625,37 @@ class TestFlowWaterGVP:
 # ============== Tests for FlowMatcher ==============
 
 
+class _ConstantVelocity(torch.nn.Module):
+    """Velocity field v(x, t) = c, independent of state and time.
+
+    Integrating dx/dt = c from t=0 to t=1 gives x(1) = x(0) + c exactly, so it
+    lets the integrators be checked against a closed-form trajectory.
+    """
+
+    def __init__(self, velocity):
+        super().__init__()
+        self.velocity = torch.as_tensor(velocity, dtype=torch.float32)
+
+    def forward(self, g, t):
+        pos = g["water"].pos
+        return self.velocity.to(pos).view(1, 3).expand(pos.shape[0], 3)
+
+
+class _LinearDecayVelocity(torch.nn.Module):
+    """Velocity field v(x, t) = -k x. Solves to x(1) = x(0) * exp(-k).
+
+    A genuine ODE where the step count matters, used to check that RK4 with few
+    steps converges to Euler with many.
+    """
+
+    def __init__(self, k):
+        super().__init__()
+        self.k = float(k)
+
+    def forward(self, g, t):
+        return -self.k * g["water"].pos
+
+
 @pytest.mark.unit
 class TestFlowMatcher:
     @pytest.fixture
@@ -751,6 +782,90 @@ class TestFlowMatcher:
 
         n_water = simple_hetero_data["water"].num_nodes
         assert water_pred.shape == (n_water, 3)
+
+    # ---- Integration correctness (issue #58) ----
+    # The tests above check output shapes/keys; these check the numerical
+    # behavior of the Euler and RK4 steppers against closed-form solutions,
+    # driven by analytic velocity fields (mocked model) rather than the encoder.
+
+    @pytest.mark.parametrize("method", ["euler", "rk4"])
+    def test_constant_field_gives_linear_trajectory(
+        self, flow_matcher, simple_hetero_data, device, method
+    ):
+        """A constant velocity field c must produce a straight-line trajectory
+        with total displacement exactly c, for both Euler and RK4 and regardless
+        of step count (dx/dt = c over t in [0, 1] => x(1) = x(0) + c)."""
+        c = torch.tensor([1.0, -2.0, 0.5], device=device)
+        flow_matcher.model = _ConstantVelocity(c).to(device)
+        integrate = getattr(flow_matcher, f"{method}_integrate")
+
+        num_steps = 11
+        result = integrate(
+            simple_hetero_data,
+            num_steps=num_steps,
+            device=str(device),
+            return_trajectory=True,
+        )[0]
+        trajectory = result["trajectory"]
+        assert len(trajectory) == num_steps
+
+        x0 = trajectory[0]
+        c_np = c.cpu().numpy()
+
+        # Net displacement equals the (constant) velocity, independent of steps.
+        np.testing.assert_allclose(
+            result["water_pred"] - x0,
+            np.broadcast_to(c_np, x0.shape),
+            atol=1e-3,
+        )
+        # Every intermediate frame lies on the line x0 + (k / (num_steps-1)) * c.
+        for k, frame in enumerate(trajectory):
+            expected = x0 + (k / (num_steps - 1)) * c_np
+            np.testing.assert_allclose(frame, expected, atol=1e-3)
+
+    def test_rk4_matches_euler_with_more_steps(
+        self, flow_matcher, simple_hetero_data, device
+    ):
+        """On the decay field dx/dt = -x, coarse RK4 should reach the same
+        solution as fine-step Euler, and be far more accurate than Euler at the
+        same (small) step count -- i.e. RK4's higher order converges faster."""
+        flow_matcher.model = _LinearDecayVelocity(k=1.0).to(device)
+
+        def run(method: str, num_steps: int, seed: int):
+            # Same seed => same prior noise (the integration's only randomness),
+            # so the runs are compared from identical initial positions.
+            gen = torch.Generator(device=device).manual_seed(seed)
+            integrate = getattr(flow_matcher, f"{method}_integrate")
+            return integrate(
+                simple_hetero_data,
+                num_steps=num_steps,
+                device=str(device),
+                return_trajectory=True,
+                generator=gen,
+            )[0]
+
+        seed = 1234
+        euler_fine = run("euler", num_steps=2000, seed=seed)
+        rk4_coarse = run("rk4", num_steps=21, seed=seed)
+        euler_coarse = run("euler", num_steps=21, seed=seed)
+
+        # Identical initial noise across the three runs (guards the comparison).
+        np.testing.assert_allclose(
+            rk4_coarse["trajectory"][0], euler_fine["trajectory"][0], atol=1e-5
+        )
+        np.testing.assert_allclose(
+            euler_coarse["trajectory"][0], euler_fine["trajectory"][0], atol=1e-5
+        )
+
+        reference = euler_fine["water_pred"]
+        # Coarse RK4 converges to the fine-step Euler solution.
+        np.testing.assert_allclose(
+            rk4_coarse["water_pred"], reference, rtol=2e-2, atol=2e-2
+        )
+        # RK4 is closer to the reference than Euler at the same step count.
+        rk4_err = np.linalg.norm(rk4_coarse["water_pred"] - reference)
+        euler_err = np.linalg.norm(euler_coarse["water_pred"] - reference)
+        assert rk4_err < euler_err
 
 
 # ============== Tests for water sampling strategies ==============
