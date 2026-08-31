@@ -3,6 +3,7 @@
 All test cases created with assistance from Claude Code and refined.
 """
 
+import copy
 from unittest.mock import Mock
 
 import numpy as np
@@ -656,6 +657,42 @@ class _LinearDecayVelocity(torch.nn.Module):
         return -self.k * g["water"].pos
 
 
+class _TimeRampVelocity(torch.nn.Module):
+    """Velocity field v(x, t) = a * t: independent of state, linear in time.
+
+    The fields above ignore t, so nothing about them notices a stage evaluated at
+    the wrong time. Here the quadrature is known in closed form for both methods
+    (RK4's Simpson weights are exact on a linear integrand, Euler's left
+    rectangles fall short by a known amount), which pins the stage times down.
+    """
+
+    def __init__(self, a):
+        super().__init__()
+        self.a = torch.as_tensor(a, dtype=torch.float32)
+
+    def forward(self, g, t):
+        pos = g["water"].pos
+        t_w = t.to(pos)[g["water"].batch].view(-1, 1)
+        return self.a.to(pos).view(1, 3) * t_w
+
+
+class _PerGraphVelocity(torch.nn.Module):
+    """Velocity field v = (graph_index + 1) * c, constant in state and time.
+
+    Each graph in a batch moves by a different amount, so results split back to
+    the wrong graph -- or waters mixed across graphs -- cannot pass.
+    """
+
+    def __init__(self, c):
+        super().__init__()
+        self.c = torch.as_tensor(c, dtype=torch.float32)
+
+    def forward(self, g, t):
+        pos = g["water"].pos
+        scale = (g["water"].batch.to(pos) + 1.0).view(-1, 1)
+        return self.c.to(pos).view(1, 3) * scale
+
+
 @pytest.mark.unit
 class TestFlowMatcher:
     @pytest.fixture
@@ -866,6 +903,76 @@ class TestFlowMatcher:
         rk4_err = np.linalg.norm(rk4_coarse["water_pred"] - reference)
         euler_err = np.linalg.norm(euler_coarse["water_pred"] - reference)
         assert rk4_err < euler_err
+
+    def test_time_dependent_field_uses_correct_stage_times(
+        self, flow_matcher, simple_hetero_data, device
+    ):
+        """On v(x, t) = a*t both integrators have a closed-form answer that
+        depends only on the times they evaluate the field at: RK4 integrates a
+        linear integrand exactly, Euler's left rectangles miss by a known
+        deficit. The constant/decay fields above are time-independent, so this
+        is what catches a stage fed the wrong t."""
+        a = torch.tensor([2.0, -1.0, 4.0], device=device)
+        flow_matcher.model = _TimeRampVelocity(a).to(device)
+        a_np = a.cpu().numpy()
+
+        num_steps = 11
+        kwargs = {
+            "num_steps": num_steps,
+            "device": str(device),
+            "return_trajectory": True,
+        }
+        rk4 = flow_matcher.rk4_integrate(simple_hetero_data, **kwargs)[0]
+        euler = flow_matcher.euler_integrate(simple_hetero_data, **kwargs)[0]
+
+        # RK4: integral of a*t over [0, 1] = a/2, exactly.
+        rk4_shift = rk4["water_pred"] - rk4["trajectory"][0]
+        np.testing.assert_allclose(
+            rk4_shift, np.broadcast_to(a_np / 2.0, rk4_shift.shape), atol=1e-4
+        )
+
+        # Euler: dt * sum(t_i) over the num_steps-1 left endpoints, which is
+        # a * (num_steps - 2) / (2 * (num_steps - 1)).
+        euler_shift = euler["water_pred"] - euler["trajectory"][0]
+        expected = a_np * (num_steps - 2) / (2 * (num_steps - 1))
+        np.testing.assert_allclose(
+            euler_shift, np.broadcast_to(expected, euler_shift.shape), atol=1e-4
+        )
+
+    @pytest.mark.parametrize("method", ["euler", "rk4"])
+    def test_batched_integration_splits_results_per_graph(
+        self, flow_matcher, simple_hetero_data, device, method
+    ):
+        """Inference integrates a list of graphs in one batch, so the per-graph
+        split of the final positions and trajectories has to be right. The two
+        graphs differ in water count and in velocity, so a wrong mask shows up."""
+        g0 = simple_hetero_data
+        g1 = copy.deepcopy(simple_hetero_data)
+        # Second graph: 3 waters instead of 5, so a mis-split changes shapes too.
+        g1["water"].pos = torch.randn(3, 3, device=device)
+        g1["water"].x = torch.randn(3, 16, device=device)
+        g1["water"].batch = torch.zeros(3, dtype=torch.long, device=device)
+
+        c = torch.tensor([1.0, -2.0, 0.5], device=device)
+        flow_matcher.model = _PerGraphVelocity(c).to(device)
+        integrate = getattr(flow_matcher, f"{method}_integrate")
+
+        num_steps = 7
+        results = integrate(
+            [g0, g1], num_steps=num_steps, device=str(device), return_trajectory=True
+        )
+
+        assert len(results) == 2
+        c_np = c.cpu().numpy()
+        for i, (result, n_water) in enumerate(zip(results, (5, 3))):
+            assert result["water_pred"].shape == (n_water, 3)
+            assert len(result["trajectory"]) == num_steps
+            assert all(f.shape == (n_water, 3) for f in result["trajectory"])
+            # Graph i moves by (i + 1) * c over t in [0, 1].
+            shift = result["water_pred"] - result["trajectory"][0]
+            np.testing.assert_allclose(
+                shift, np.broadcast_to((i + 1) * c_np, shift.shape), atol=1e-3
+            )
 
 
 # ============== Tests for water sampling strategies ==============
